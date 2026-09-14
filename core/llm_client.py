@@ -64,6 +64,7 @@ def clean_llm_output(raw: str, prompt: Optional[str] = None) -> str:
         if tag in text:
             last_idx = text.rfind(tag)
             text = text[last_idx + len(tag):]
+            break
 
     # Strip prompt echo if present
     if prompt:
@@ -308,8 +309,9 @@ class LLMClient:
                 proc.kill()
             raise TimeoutError(f"llama-cli timed out after {self.config.max_runtime_seconds} seconds")
 
-        if proc.returncode != 0 and not stdout_text:
-            raise RuntimeError(f"llama-cli failed with exit code {proc.returncode}:\n{stderr_text}")
+        if proc.returncode != 0:
+            combined = (stderr_text + "\n" + stdout_text).strip()
+            raise RuntimeError(f"llama-cli failed with exit code {proc.returncode}:\n{combined}")
 
         latency = (time.perf_counter() - t_start) * 1000.0
         content = clean_llm_output(stdout_text, prompt=prompt)

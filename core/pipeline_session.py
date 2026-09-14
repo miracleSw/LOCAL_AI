@@ -117,6 +117,8 @@ class PipelineSession:
             for out_dir in output_dirs:
                 if out_dir.exists() and out_dir.is_dir():
                     for item in out_dir.iterdir():
+                        if item.name == ".gitkeep":
+                            continue
                         try:
                             if item.is_file():
                                 item.unlink()

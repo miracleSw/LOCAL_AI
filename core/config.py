@@ -147,11 +147,14 @@ def load_config(config_file: Optional[Path] = None) -> AppConfig:
         if p.exists():
             return p
 
+        bname = bin_name[:-4] if bin_name.lower().endswith(".exe") else bin_name
         candidates = [
             p.with_suffix(""),
             p.with_suffix(".exe"),
-            BASE_DIR / "llama-linux" / bin_name,
-            BASE_DIR / "llama-vulkan" / bin_name,
+            BASE_DIR / "llama-linux" / bname,
+            BASE_DIR / "llama-linux" / f"{bname}.exe",
+            BASE_DIR / "llama-vulkan" / bname,
+            BASE_DIR / "llama-vulkan" / f"{bname}.exe",
         ]
         for c in candidates:
             if c.exists():

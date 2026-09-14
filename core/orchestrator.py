@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -159,6 +160,30 @@ def load_task_text(config: AppConfig, override_text: Optional[str] = None, overr
     raise ValueError(f"Task file not found: {config.input_task_path}")
 
 
+def is_fatal_error_content(text: str) -> bool:
+    """
+    Validate whether text loaded from disk contains fatal error dumps
+    (e.g., model load failure, CLI crash, empty output) rather than legitimate step content.
+    """
+    if not text or not text.strip():
+        return True
+    lower = text.lower().strip()
+    fatal_markers = [
+        "failed to load the model",
+        "failed to load model",
+        "error: failed to load",
+        "llama-cli failed with exit code",
+    ]
+    # If text directly starts with a fatal error signature, treat as fatal
+    if any(lower.startswith(marker) for marker in fatal_markers):
+        return True
+    # If text contains fatal error markers but lacks structured markdown headers, treat as raw crash dump
+    has_markdown_header = bool(re.search(r"^##?\s+", text, re.MULTILINE))
+    if any(marker in lower for marker in fatal_markers) and not has_markdown_header:
+        return True
+    return False
+
+
 def populate_session_from_disk(session: PipelineSession, config: AppConfig) -> None:
     """
     Restore completed steps from disk into session when executing in step-by-step interactive mode.
@@ -176,9 +201,9 @@ def populate_session_from_disk(session: PipelineSession, config: AppConfig) -> N
             cpath = config.steps_dir / cname
             if cpath.exists():
                 text = cpath.read_text(encoding="utf-8", errors="replace").strip()
-                if text:
+                if not is_fatal_error_content(text):
                     session.record_step(step_name=step_name, content=text, status="success")
-                break
+                    break
 
 
 def run_pipeline(

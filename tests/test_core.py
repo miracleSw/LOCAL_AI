@@ -315,6 +315,16 @@ def ok(): pass
         self.assertNotIn("[ Prompt:", cleaned)
         self.assertEqual(cleaned.strip(), "```python\nprint(123)\n```")
 
+        # Prompt echo followed by response containing chatml explanation
+        raw_echo = (
+            "<|im_start|>system\nYou are helpful.<|im_end|>\n"
+            "<|im_start|>user\nHow do I prompt?<|im_end|>\n"
+            "<|im_start|>assistant\n"
+            "Use format:\n<|im_start|>user\nHello<|im_end|>"
+        )
+        cleaned_echo = clean_llm_output(raw_echo)
+        self.assertIn("Use format:\n<|im_start|>user\nHello", cleaned_echo)
+
     def test_format_chatml_multilingual(self):
         sys_vi = "Bạn là chuyên gia lập trình Python."
         user_vi = "Viết hàm tính giai thừa bằng đệ quy."
@@ -340,6 +350,148 @@ def ok(): pass
         self.assertTrue(val_res.is_valid)
         self.assertEqual(resp.content, val_res.cleaned_content)
         self.assertNotIn("```\n```\n```", resp.content)
+
+    def test_validator_tuple_type_hints(self):
+        import typing
+        hints = typing.get_type_hints(run_with_repair)
+        self.assertIn("return", hints)
+        self.assertEqual(getattr(hints["return"], "__origin__", None), tuple)
+
+    def test_resolve_bin_candidate_expansion(self):
+        # Verify fallback to llama-linux/bin.exe and llama-vulkan/bin.exe
+        fake_base = self.temp_dir / "fake_base"
+        fake_base.mkdir()
+        linux_dir = fake_base / "llama-linux"
+        linux_dir.mkdir()
+        dummy_exe = linux_dir / "llama-server.exe"
+        dummy_exe.write_text("binary", encoding="utf-8")
+
+        ini = fake_base / "test.ini"
+        ini.write_text("[paths]\nllama_server = nonexistent/llama-server\n", encoding="utf-8")
+
+        with patch("core.config.BASE_DIR", fake_base), patch("shutil.which", return_value=None):
+            cfg = load_config(ini)
+            self.assertEqual(cfg.llama_server_path, dummy_exe)
+
+    def test_llm_client_cli_nonzero_exit_code_combined_error(self):
+        client = LLMClient()
+
+        # 1. Non-zero exit code with error in stdout only
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("Failed to load the model: file corrupted", "")
+            mock_proc.returncode = 1
+            mock_popen.return_value = mock_proc
+            with self.assertRaises(RuntimeError) as ctx:
+                client.generate_via_cli("Test prompt")
+            self.assertIn("llama-cli failed with exit code 1", str(ctx.exception))
+            self.assertIn("Failed to load the model: file corrupted", str(ctx.exception))
+
+        # 2. Non-zero exit code with error in both stdout and stderr
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("stdout detail", "stderr fatal error")
+            mock_proc.returncode = 2
+            mock_popen.return_value = mock_proc
+            with self.assertRaises(RuntimeError) as ctx:
+                client.generate_via_cli("Test prompt")
+            self.assertIn("llama-cli failed with exit code 2", str(ctx.exception))
+            self.assertIn("stderr fatal error", str(ctx.exception))
+            self.assertIn("stdout detail", str(ctx.exception))
+
+    def test_pipeline_session_atomic_reset_preserves_gitkeep(self):
+        sess = PipelineSession(task_text="Test gitkeep preservation")
+        out_sub = self.temp_dir / "out_keep"
+        out_sub.mkdir()
+        keep_file = out_sub / ".gitkeep"
+        keep_file.write_text("", encoding="utf-8")
+        stale_file = out_sub / "stale_step.md"
+        stale_file.write_text("stale output", encoding="utf-8")
+        stale_dir = out_sub / "sub_artifacts"
+        stale_dir.mkdir()
+        (stale_dir / "old.txt").write_text("old", encoding="utf-8")
+
+        sess.atomic_reset(output_dirs=[out_sub])
+        self.assertTrue(keep_file.exists(), ".gitkeep was deleted during atomic_reset")
+        self.assertFalse(stale_file.exists(), "stale file was not deleted during atomic_reset")
+        self.assertFalse(stale_dir.exists(), "stale directory was not deleted during atomic_reset")
+
+    def test_populate_session_from_disk_validation(self):
+        from core.orchestrator import populate_session_from_disk
+        sess = PipelineSession(task_text="Test disk populate validation")
+        steps_dir = self.temp_dir / "test_steps"
+        steps_dir.mkdir()
+
+        cfg = MagicMock()
+        cfg.steps_dir = steps_dir
+
+        # 1. Empty step file should not be recorded
+        (steps_dir / "step_01_analyze.md").write_text("   \n\t  ", encoding="utf-8")
+        populate_session_from_disk(sess, cfg)
+        self.assertIsNone(sess.get_step_content("analyze"))
+
+        # 2. Fatal error marker "Failed to load the model" should not be recorded
+        (steps_dir / "step_01_analyze.md").write_text("Failed to load the model: GGUF magic invalid", encoding="utf-8")
+        populate_session_from_disk(sess, cfg)
+        self.assertIsNone(sess.get_step_content("analyze"))
+
+        # 3. Fatal error marker "llama-cli failed with exit code" should not be recorded
+        (steps_dir / "step_01_analyze.md").write_text("llama-cli failed with exit code 1: out of memory", encoding="utf-8")
+        populate_session_from_disk(sess, cfg)
+        self.assertIsNone(sess.get_step_content("analyze"))
+
+        # 4. Valid step file should be recorded
+        (steps_dir / "step_01_analyze.md").write_text("## 1. Requirements\nValid analysis content.", encoding="utf-8")
+        populate_session_from_disk(sess, cfg)
+        self.assertEqual(sess.get_step_content("analyze"), "## 1. Requirements\nValid analysis content.")
+        self.assertEqual(sess.steps["analyze"].status, "success")
+
+        # 5. Fallback to candidate 2 if candidate 1 contains fatal error marker
+        sess_fallback = PipelineSession(task_text="Test candidate fallback")
+        (steps_dir / "step_02_solve.md").write_text("Failed to load the model", encoding="utf-8")
+        (steps_dir / "step_solve.md").write_text("## Solution\nValid fallback content.", encoding="utf-8")
+        populate_session_from_disk(sess_fallback, cfg)
+        self.assertEqual(sess_fallback.get_step_content("solve"), "## Solution\nValid fallback content.")
+
+        # 6. Existing session content should not be overwritten
+        sess_existing = PipelineSession(task_text="Test existing preservation")
+        sess_existing.record_step("analyze", "In-memory analysis", status="success")
+        populate_session_from_disk(sess_existing, cfg)
+        self.assertEqual(sess_existing.get_step_content("analyze"), "In-memory analysis")
+
+        # 7. Valid markdown legitimately discussing "Failed to load the model" should be recorded
+        sess_doc = PipelineSession(task_text="Test troubleshooting documentation")
+        (steps_dir / "step_01_analyze.md").write_text(
+            "## 1. Problem Summary\nFix the 'Failed to load the model' issue.\n\n## 2. Core Functional Requirements\n- Check VRAM",
+            encoding="utf-8"
+        )
+        populate_session_from_disk(sess_doc, cfg)
+        self.assertIsNotNone(sess_doc.get_step_content("analyze"))
+        self.assertIn("Failed to load the model", sess_doc.get_step_content("analyze"))
+
+        # 8. Valid code file legitimately handling error in step 3 should be recorded
+        sess_code = PipelineSession(task_text="Test code error handling")
+        (steps_dir / "step_03_verify.md").write_text(
+            "## 1. Verification Checklist\n- Tested\n\n## 3. Final Production-Ready Files\n```python\n# FILE: app.py\nprint('error: failed to load')\n```",
+            encoding="utf-8"
+        )
+        populate_session_from_disk(sess_code, cfg)
+        self.assertIsNotNone(sess_code.get_step_content("verify"))
+        self.assertIn("error: failed to load", sess_code.get_step_content("verify"))
+
+    def test_is_fatal_error_content(self):
+        from core.orchestrator import is_fatal_error_content
+        # True cases (Fatal crashes / invalid dumps)
+        self.assertTrue(is_fatal_error_content(""))
+        self.assertTrue(is_fatal_error_content("   \n\t "))
+        self.assertTrue(is_fatal_error_content("Failed to load the model: file corrupted"))
+        self.assertTrue(is_fatal_error_content("llama-cli failed with exit code 1: OOM"))
+        self.assertTrue(is_fatal_error_content("[LOG] error: failed to load model 'x.gguf'"))
+
+        # False cases (Legitimate markdown documents)
+        self.assertFalse(is_fatal_error_content("## 1. Problem Summary\nHow to solve failed to load the model"))
+        self.assertFalse(is_fatal_error_content("# Guide\nIf you see error: failed to load, check path."))
+        self.assertFalse(is_fatal_error_content("## 3. Implementation\n```python\nprint('llama-cli failed with exit code')\n```"))
 
 
 if __name__ == "__main__":
