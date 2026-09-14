@@ -147,16 +147,22 @@ LOCAL_AI_CORE/
 ## Quick Start
 
 ### Prerequisites
-* Windows 10 / 11 (64-bit)
-* Python 3.10+ (must be added to `PATH`)
+* **Windows 10 / 11 (64-bit)** or **Linux Mint / Ubuntu (x86_64)**
+* Python 3.10+ (must be added to `PATH` or available via `python3`)
 * Vulkan-compatible graphics driver (NVIDIA, AMD, or Intel)
 
-### Option 1: Interactive Menu (Recommended)
-1. Double-click `00_MENU.bat`.
-2. Press `[1]` to launch the **Llama Server**. A separate console window opens and keeps the model loaded in RAM/VRAM.
-3. Press `[3]` to open `input\current_task.txt` in Notepad and paste your task description.
+### Option 1: Automated Setup (Recommended)
+* **On Windows**: Double-click `SETUP.bat` to verify environment, download model, and launch `00_MENU.bat`.
+* **On Linux Mint / Ubuntu**: Run `bash setup.sh` (or `chmod +x *.sh && ./setup.sh`) to auto-configure and launch `menu.sh`.
+
+### Option 2: Interactive Menu
+* **Windows**: Run `00_MENU.bat`.
+* **Linux Mint / Ubuntu**: Run `./menu.sh`.
+1. Press `[1]` to launch the **Llama Server** in the background or terminal.
+2. Press `[15]` to chat directly in the interactive AGY CLI with real-time slash suggestions.
+3. Press `[3]` to open `input/current_task.txt` and paste your task description.
 4. Press `[6]` (**RUN ALL**) to execute the end-to-end pipeline.
-5. Press `[13]` to open `output\final_project` and view the generated files.
+5. Press `[13]` to open `output/final_project` and view the generated files.
 
 ### Option 2: Command-Line Interface (CLI)
 

@@ -12,6 +12,8 @@
 *.part
 models/**
 !models/.gitkeep
+llama-linux/**
+!llama-linux/.gitkeep
 
 # --- Runtime Outputs & Generated Data ---
 output/steps/**

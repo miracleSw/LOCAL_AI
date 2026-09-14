@@ -155,14 +155,28 @@ def build_popup_lines(
     return lines
 
 
-def is_interactive_console() -> bool:
-    """Check if standard input/output is an interactive Windows console supporting msvcrt."""
-    if os.name != "nt":
-        return False
+def _read_char_posix() -> str:
+    """Read single character on POSIX terminal using raw mode."""
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
     try:
-        import msvcrt  # noqa: F401
-    except ImportError:
-        return False
+        tty.setraw(fd)
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _kbhit_posix() -> bool:
+    """Non-blocking keyboard hit check on POSIX using select."""
+    import select
+    dr, _, _ = select.select([sys.stdin], [], [], 0)
+    return len(dr) > 0
+
+
+def is_interactive_console() -> bool:
+    """Check if standard input/output is an interactive console supporting character-by-character input."""
     try:
         if not (hasattr(sys.stdin, "isatty") and sys.stdin.isatty()):
             return False
@@ -170,7 +184,21 @@ def is_interactive_console() -> bool:
             return False
     except Exception:
         return False
-    return True
+
+    if os.name == "nt":
+        try:
+            import msvcrt  # noqa: F401
+            return True
+        except ImportError:
+            return False
+    else:
+        try:
+            import select  # noqa: F401
+            import termios  # noqa: F401
+            import tty  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
 
 def _render_terminal_state(
@@ -393,9 +421,13 @@ def read_interactive_input(
     kbhit_func = kbhit_fn
 
     if read_char is None:
-        import msvcrt
-        read_char = msvcrt.getwch
-        kbhit_func = msvcrt.kbhit
+        if os.name == "nt":
+            import msvcrt
+            read_char = msvcrt.getwch
+            kbhit_func = msvcrt.kbhit
+        else:
+            read_char = _read_char_posix
+            kbhit_func = _kbhit_posix
 
     return _run_interactive_loop(prompt, model_name, out_stream, read_char, kbhit_fn=kbhit_func)
 

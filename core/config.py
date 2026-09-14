@@ -9,6 +9,7 @@ from __future__ import annotations
 import configparser
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -138,14 +139,38 @@ def load_config(config_file: Optional[Path] = None) -> AppConfig:
         except Exception:
             return default
 
+    def _resolve_bin(section: str, key: str, default: str, bin_name: str) -> Path:
+        raw = _s(section, key, default)
+        p = Path(raw)
+        if not p.is_absolute():
+            p = BASE_DIR / p
+        if p.exists():
+            return p
+
+        candidates = [
+            p.with_suffix(""),
+            p.with_suffix(".exe"),
+            BASE_DIR / "llama-linux" / bin_name,
+            BASE_DIR / "llama-vulkan" / bin_name,
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+
+        which_path = shutil.which(bin_name)
+        if which_path:
+            return Path(which_path)
+
+        return p
+
     server_host = _s("server", "host", "127.0.0.1")
     server_port = _i("server", "port", 8080)
     server_endpoint = _s("server", "endpoint", f"http://{server_host}:{server_port}/completion")
     server_health_endpoint = _s("server", "health_endpoint", f"http://{server_host}:{server_port}/health")
 
     return AppConfig(
-        llama_server_path=_p("paths", "llama_server", "llama-vulkan/llama-server.exe"),
-        llama_cli_path=_p("paths", "llama_cli", "llama-vulkan/llama-cli.exe"),
+        llama_server_path=_resolve_bin("paths", "llama_server", "llama-vulkan/llama-server.exe", "llama-server"),
+        llama_cli_path=_resolve_bin("paths", "llama_cli", "llama-vulkan/llama-cli.exe", "llama-cli"),
         model_path=_p("paths", "model", "models/qwen25-coder-3b-q4km.gguf"),
         rag_dir=_p("paths", "rag_dir", "rag/active"),
         input_task_path=_p("paths", "input_task", "input/current_task.txt"),
