@@ -1,0 +1,7 @@
+[Dán đề bài hoặc mô tả bài toán cần giải quyết vào đây]
+Ví dụ:
+Xây dựng một dịch vụ lưu trữ dữ liệu dạng Key-Value trong bộ nhớ (In-Memory Key-Value Store) có hỗ trợ:
+1. Thao tác GET, SET, DELETE cơ bản với độ phức tạp O(1).
+2. Hỗ trợ TTL (Time To Live) cho từng key để tự động hết hạn và dọn dẹp.
+3. Thread-safe khi chạy đa luồng.
+4. Có cơ chế snapshot ghi dữ liệu định kỳ ra file JSON và khôi phục khi khởi động lại.

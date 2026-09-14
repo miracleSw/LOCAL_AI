@@ -1,0 +1,4 @@
+# LOCAL_AI_CORE Requirements
+# Note: LOCAL_AI_CORE core pipeline is designed to be 100% pure Python standard library.
+# The dependencies below are optional enhancements for Windows ANSI console colors & terminal styling.
+colorama>=0.4.6

@@ -1,0 +1,72 @@
+# ================================================================
+# LOCAL_AI_CORE - .gitignore
+# ================================================================
+
+# --- Large AI Models & Weights (> 100MB, cannot push to GitHub) ---
+*.gguf
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.part
+models/**
+!models/.gitkeep
+
+# --- Runtime Outputs & Generated Data ---
+output/steps/**
+!output/steps/.gitkeep
+output/final_project/**
+!output/final_project/.gitkeep
+output/logs/**
+!output/logs/.gitkeep
+output/session_*.json
+output/*.log
+*.log
+
+# --- Input Tasks (keep .gitkeep & sample template) ---
+!input/.gitkeep
+
+# --- Python Bytecode & Virtual Environments ---
+__pycache__/
+__pycache__/**
+**/__pycache__/**
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+env/**
+venv/
+venv/**
+.venv/
+.venv/**
+ENV/
+ENV/**
+build/
+build/**
+dist/
+dist/**
+*.egg-info/
+*.egg-info/**
+.pytest_cache/
+.pytest_cache/**
+.coverage
+htmlcov/
+htmlcov/**
+
+# --- IDE & Editor Settings ---
+.idea/
+.idea/**
+.vscode/
+.vscode/**
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- OS Temporary Files ---
+*.tmp
+*.bak
