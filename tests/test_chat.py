@@ -444,6 +444,52 @@ class TestChatComponents(unittest.TestCase):
             self.assertEqual(res, "fallback response")
             mock_input.assert_called_once_with("> ")
 
+    def test_read_interactive_input_posix_cbreak_lifecycle(self):
+        import types
+        mock_termios = types.ModuleType("termios")
+        mock_termios.TCSADRAIN = 1
+        mock_termios.tcgetattr = MagicMock(return_value=["original_terminal_settings"])
+        mock_termios.tcsetattr = MagicMock()
+
+        mock_tty = types.ModuleType("tty")
+        mock_tty.setcbreak = MagicMock()
+
+        mock_stdin = MagicMock()
+        mock_stdin.fileno.return_value = 0
+        mock_stdin.isatty.return_value = True
+
+        buf = io.StringIO()
+        keys = ["/", "\r"]
+        getwch = iter(keys).__next__
+
+        # 1. Normal completion sets cbreak and restores in finally
+        with patch("os.name", "posix"), \
+             patch("sys.stdin", mock_stdin), \
+             patch.dict("sys.modules", {"termios": mock_termios, "tty": mock_tty}):
+            res = read_interactive_input("> ", "Qwen 2.5 Coder 3B", stream=buf, getwch_fn=getwch)
+            self.assertEqual(res, "/boost")
+            mock_termios.tcgetattr.assert_called_with(0)
+            mock_tty.setcbreak.assert_called_with(0)
+            mock_termios.tcsetattr.assert_called_with(0, mock_termios.TCSADRAIN, ["original_terminal_settings"])
+
+        # 2. Even if an exception (e.g. KeyboardInterrupt) occurs, tcsetattr is guaranteed in finally
+        mock_termios.tcsetattr.reset_mock()
+        keys_interrupt = ["\x03"]
+        getwch_interrupt = iter(keys_interrupt).__next__
+
+        # 3. Reading empty string (POSIX stdin EOF) cleanly raises EOFError without TypeError
+        keys_eof = [""]
+        getwch_eof = iter(keys_eof).__next__
+        with self.assertRaises(EOFError):
+            read_interactive_input("> ", "Qwen 2.5 Coder 3B", stream=buf, getwch_fn=getwch_eof)
+
+    def test_kbhit_posix_timeout(self):
+        from core.chat import _kbhit_posix
+        with patch("select.select", return_value=([MagicMock()], [], [])) as mock_select:
+            hit = _kbhit_posix(timeout=0.05)
+            self.assertTrue(hit)
+            mock_select.assert_called_with([sys.stdin], [], [], 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

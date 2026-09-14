@@ -32,6 +32,8 @@ NOISE_TAIL_PATTERNS = [
     r"\n\[end of text\][\s\S]*$",
     r"\nExiting\.\.\.[\s\S]*$",
     r"\n\s*>\s*$",  # trailing interactive prompt symbol
+    r"<\|im_end\|>[\s\S]*$",
+    r"<\|endoftext\|>[\s\S]*$",
 ]
 
 
@@ -91,6 +93,29 @@ def clean_llm_output(raw: str, prompt: Optional[str] = None) -> str:
     return text.strip() + ("\n" if text.strip() else "")
 
 
+def format_chatml(system_prompt: Optional[str], user_prompt: Optional[str]) -> str:
+    """Format prompts using standard Qwen/ChatML structure when not already formatted."""
+    user_str = user_prompt or ""
+    sys_str = system_prompt or ""
+    user_strip = user_str.strip()
+    sys_strip = sys_str.strip()
+
+    # If user_prompt is already formatted as ChatML
+    if user_strip.startswith("<|im_start|>"):
+        if sys_strip.startswith("<|im_start|>"):
+            return f"{sys_strip}\n{user_str}"
+        return user_str
+
+    # If system_prompt is already full ChatML and user_prompt is empty
+    if sys_strip.startswith("<|im_start|>") and not user_strip:
+        return sys_str
+
+    if sys_strip:
+        return f"<|im_start|>system\n{sys_strip}<|im_end|>\n<|im_start|>user\n{user_strip}<|im_end|>\n<|im_start|>assistant\n"
+    else:
+        return f"<|im_start|>user\n{user_strip}<|im_end|>\n<|im_start|>assistant\n"
+
+
 class LLMClient:
     """Client that coordinates fast server requests with reliable CLI fallback."""
 
@@ -114,8 +139,14 @@ class LLMClient:
         prompt: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        prompt_save_path: Optional[Path] = None,
     ) -> LLMResponse:
         """Query persistent llama-server HTTP /completion endpoint."""
+        if prompt_save_path is not None:
+            p_path = Path(prompt_save_path)
+            p_path.parent.mkdir(parents=True, exist_ok=True)
+            p_path.write_text(prompt, encoding="utf-8")
+
         t_start = time.perf_counter()
         n_predict = max_tokens if max_tokens is not None else self.config.max_tokens
         temp = temperature if temperature is not None else self.config.temperature
@@ -160,8 +191,14 @@ class LLMClient:
         prompt: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        prompt_save_path: Optional[Path] = None,
     ):
         """Yield tokens from persistent llama-server as they arrive via SSE stream."""
+        if prompt_save_path is not None:
+            p_path = Path(prompt_save_path)
+            p_path.parent.mkdir(parents=True, exist_ok=True)
+            p_path.write_text(prompt, encoding="utf-8")
+
         n_predict = max_tokens if max_tokens is not None else self.config.max_tokens
         temp = temperature if temperature is not None else self.config.temperature
 
@@ -214,12 +251,13 @@ class LLMClient:
         temp = temperature if temperature is not None else self.config.temperature
 
         # Ensure steps directory exists for temporary prompt file
-        self.config.steps_dir.mkdir(parents=True, exist_ok=True)
         if prompt_save_path is None:
+            self.config.steps_dir.mkdir(parents=True, exist_ok=True)
             prompt_file = self.config.steps_dir / "last_cli_prompt.txt"
         else:
-            prompt_file = prompt_save_path
+            prompt_file = Path(prompt_save_path)
 
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
         prompt_file.write_text(prompt, encoding="utf-8")
 
         # Build CLI command with anti-deadlock flags
@@ -234,7 +272,6 @@ class LLMClient:
             "--repeat-penalty", str(self.config.repeat_penalty),
             "-n", str(n_predict),
             "--single-turn",        # Prevent entering REPL prompt
-            "--no-conversation",    # Disable interactive session completely
             "--no-display-prompt",  # Prevent echoing prompt back
             "--log-disable",        # Cleaner output stream
             "--simple-io",          # Line-buffered I/O
@@ -298,7 +335,12 @@ class LLMClient:
         """
         if self.is_server_available():
             try:
-                return self.generate_via_server(prompt, max_tokens=max_tokens, temperature=temperature)
+                return self.generate_via_server(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    prompt_save_path=prompt_save_path,
+                )
             except Exception as exc:
                 print(f"[LLMClient] Warning: llama-server request failed ({exc}). Falling back to llama-cli.exe...", file=sys.stderr)
 
@@ -314,6 +356,7 @@ class LLMClient:
         prompt: str,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        prompt_save_path: Optional[Path] = None,
     ):
         """
         Stream tokens if persistent llama-server is online.
@@ -321,11 +364,21 @@ class LLMClient:
         """
         if self.is_server_available():
             try:
-                for token in self.stream_generate_via_server(prompt, max_tokens=max_tokens, temperature=temperature):
+                for token in self.stream_generate_via_server(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    prompt_save_path=prompt_save_path,
+                ):
                     yield token
                 return
             except Exception as exc:
                 print(f"[LLMClient] Server stream interrupted ({exc}). Falling back to CLI...", file=sys.stderr)
 
-        resp = self.generate_via_cli(prompt, max_tokens=max_tokens, temperature=temperature)
+        resp = self.generate_via_cli(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            prompt_save_path=prompt_save_path,
+        )
         yield resp.content

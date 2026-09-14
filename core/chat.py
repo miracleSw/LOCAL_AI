@@ -156,22 +156,14 @@ def build_popup_lines(
 
 
 def _read_char_posix() -> str:
-    """Read single character on POSIX terminal using raw mode."""
-    import termios
-    import tty
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        return sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    """Read single character on POSIX terminal."""
+    return sys.stdin.read(1)
 
 
-def _kbhit_posix() -> bool:
+def _kbhit_posix(timeout: float = 0.0) -> bool:
     """Non-blocking keyboard hit check on POSIX using select."""
     import select
-    dr, _, _ = select.select([sys.stdin], [], [], 0)
+    dr, _, _ = select.select([sys.stdin], [], [], timeout)
     return len(dr) > 0
 
 
@@ -264,21 +256,42 @@ def _run_interactive_loop(
                     time.sleep(0.02)
 
             ch = read_char()
+            if not ch:
+                raise EOFError()
 
             # Handle scan code prefixes (\x00, \xe0) and ANSI escape sequences (\x1b)
             if ch in ("\x00", "\xe0"):
                 ch2 = read_char()
+                if not ch2:
+                    raise EOFError()
             elif ch == "\x1b":
                 is_escape_seq = False
-                if kbhit_fn is not None and kbhit_fn():
+                has_next = False
+                if kbhit_fn is not None:
+                    try:
+                        has_next = kbhit_fn(timeout=0.05)
+                    except TypeError:
+                        has_next = kbhit_fn()
+                if has_next:
                     ch2_candidate = read_char()
+                    if not ch2_candidate:
+                        raise EOFError()
                     if ch2_candidate in ("[", "O"):
                         ch3 = read_char()
-                        if ch3 == "3" and kbhit_fn and kbhit_fn():
-                            read_char()  # consume '~'
-                            ch = "\xe0"
-                            ch2 = "S"
-                            is_escape_seq = True
+                        if not ch3:
+                            raise EOFError()
+                        if ch3 == "3":
+                            has_tilde = False
+                            if kbhit_fn is not None:
+                                try:
+                                    has_tilde = kbhit_fn(timeout=0.05)
+                                except TypeError:
+                                    has_tilde = kbhit_fn()
+                            if has_tilde:
+                                read_char()  # consume '~'
+                                ch = "\xe0"
+                                ch2 = "S"
+                                is_escape_seq = True
                         else:
                             ansi_map = {
                                 "A": "H",  # Up
@@ -429,7 +442,32 @@ def read_interactive_input(
             read_char = _read_char_posix
             kbhit_func = _kbhit_posix
 
-    return _run_interactive_loop(prompt, model_name, out_stream, read_char, kbhit_fn=kbhit_func)
+    if os.name != "nt":
+        fd = None
+        old_settings = None
+        cbreak_set = False
+        try:
+            if hasattr(sys.stdin, "fileno") and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+                import termios
+                import tty
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+                tty.setcbreak(fd)
+                cbreak_set = True
+        except Exception:
+            cbreak_set = False
+
+        try:
+            return _run_interactive_loop(prompt, model_name, out_stream, read_char, kbhit_fn=kbhit_func)
+        finally:
+            if cbreak_set and old_settings is not None and fd is not None:
+                try:
+                    import termios
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except Exception:
+                    pass
+    else:
+        return _run_interactive_loop(prompt, model_name, out_stream, read_char, kbhit_fn=kbhit_func)
 
 
 class Spinner:
@@ -647,8 +685,8 @@ def show_status(client: LLMClient, thinking_mode: bool = False):
     print(f"  {CYAN}▸{RESET} Model:          {GREEN}{model_name}{RESET}")
     print(f"  {CYAN}▸{RESET} Model Path:     {getattr(cfg, 'model_path', 'models/qwen25-coder-3b-q4km.gguf')}")
     print(f"  {CYAN}▸{RESET} Server:         {GREEN if online else YELLOW}{'ONLINE (HTTP ' + str(getattr(cfg, 'server_port', 8080)) + ')' if online else 'OFFLINE (Standalone CLI)'}{RESET}")
-    print(f"  {CYAN}▸{RESET} Context Limit:  {getattr(cfg, 'ctx_size', 6192)} tokens")
-    print(f"  {CYAN}▸{RESET} CPU Threads:    {getattr(cfg, 'threads', 6)} (i7-12700 P-cores)")
+    print(f"  {CYAN}▸{RESET} Context Limit:  {getattr(cfg, 'ctx_size', 6144)} tokens")
+    print(f"  {CYAN}▸{RESET} CPU Threads:    {getattr(cfg, 'threads', 8)} (i7-12700 P-cores)")
     print(f"  {CYAN}▸{RESET} GPU Layers:     {getattr(cfg, 'gpu_layers', 12)} (RX 6300 2GB VRAM)")
     print(f"  {CYAN}▸{RESET} Vulkan Binary:  {getattr(cfg, 'llama_server_path', Path('llama-server.exe')).name}")
     print(f"  {CYAN}▸{RESET} Reasoning Mode: {GREEN if thinking_mode else GRAY}{'ENABLED (/think, /boost)' if thinking_mode else 'AUTO (detects <think>)'}{RESET}\n")

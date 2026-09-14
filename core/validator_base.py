@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from core.llm_client import LLMResponse
+from core.llm_client import LLMResponse, format_chatml
 from core.pipeline_session import PipelineSession
 
 
@@ -55,6 +55,13 @@ class BaseValidator:
         """Run base checks. Subclasses should override and call super().validate()."""
         issues: List[ValidationIssue] = []
         text = content.strip()
+        if "<|im_end|>" in text:
+            text = re.sub(r"<\|im_end\|>[\s\S]*$", "", text).strip()
+        pruned = re.sub(r"(\s*```[a-zA-Z0-9_\-\.\+]*\s*){2,}$", "", text).strip()
+        if pruned != text:
+            if len(re.findall(r"```", pruned)) % 2 != 0:
+                pruned = pruned + "\n```"
+            text = pruned
 
         # 1. Empty content check
         if not text:
@@ -100,9 +107,14 @@ def build_repair_prompt(
     extra_hints: Optional[str] = None,
 ) -> str:
     """
-    Construct a compact, highly focused repair prompt.
+    Construct a compact, highly focused repair prompt with ChatML formatting.
     Does not overwhelm 3B models with full re-prompts; focuses strictly on fixing identified issues.
     """
+    system_prompt = (
+        f"You are an expert software developer and repair specialist for step '{step_name}'.\n"
+        "Your previous response failed validation. Strictly fix all identified errors and output the entire corrected solution."
+    )
+
     error_bullets = "\n".join(f"- {issue.message}" for issue in issues if issue.severity == "error")
 
     # Take a snippet of the previous output (up to 1200 characters) to show context
@@ -112,7 +124,7 @@ def build_repair_prompt(
 
     hints_block = f"\nREPAIR GUIDANCE:\n{extra_hints}\n" if extra_hints else ""
 
-    return f"""[CRITICAL REPAIR REQUEST]
+    user_prompt = f"""[CRITICAL REPAIR REQUEST]
 Your previous output for step '{step_name}' failed validation checks.
 
 ORIGINAL TASK:
@@ -129,8 +141,9 @@ ERRORS DETECTED:
 INSTRUCTIONS:
 1. Fix all the errors listed above.
 2. Maintain complete, correct markdown structure.
-3. Output the entire corrected solution for this step now.
-"""
+3. Output the entire corrected solution for this step now."""
+
+    return format_chatml(system_prompt, user_prompt)
 
 
 def run_with_repair(
@@ -150,6 +163,8 @@ def run_with_repair(
 
     resp = generator_fn(current_prompt)
     val_res = validator.validate(resp.content)
+    if val_res.cleaned_content is not None:
+        resp.content = val_res.cleaned_content
 
     repair_history.append({
         "attempt": 1,
@@ -173,6 +188,8 @@ def run_with_repair(
 
         resp = generator_fn(repair_prompt)
         val_res = validator.validate(resp.content)
+        if val_res.cleaned_content is not None:
+            resp.content = val_res.cleaned_content
 
         repair_history.append({
             "attempt": attempts,

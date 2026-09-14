@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.config import AppConfig
-from core.llm_client import LLMClient, LLMResponse
+from core.llm_client import LLMClient, LLMResponse, format_chatml
 from core.pipeline_session import PipelineSession
 from core.validator_base import BaseValidator, run_with_repair
 
@@ -29,14 +29,15 @@ class AnalyzeValidator(BaseValidator):
 
 
 def build_analyze_prompt(task_text: str, rag_context: str = "") -> str:
-    """Construct prompt for Step 1."""
-    rag_block = f"\nRAG REFERENCE RULES:\n{rag_context}\n" if rag_context.strip() else ""
+    """Construct prompt for Step 1 using ChatML formatting."""
+    system_prompt = (
+        "You are an expert software architect and systems analyst.\n"
+        "Analyze the following task and extract a rigorous, modular problem specification.\n"
+        "Do NOT write final code yet; focus strictly on requirements, constraints, and architecture."
+    )
+    rag_block = f"RAG REFERENCE RULES:\n{rag_context}\n\n" if rag_context.strip() else ""
 
-    return f"""You are an expert software architect and systems analyst.
-Analyze the following task and extract a rigorous, modular problem specification.
-Do NOT write final code yet; focus strictly on requirements, constraints, and architecture.
-{rag_block}
-TASK DESCRIPTION:
+    user_prompt = f"""{rag_block}TASK DESCRIPTION:
 {task_text}
 
 OUTPUT FORMAT REQUIRED (Use these exact markdown headers):
@@ -58,8 +59,9 @@ OUTPUT FORMAT REQUIRED (Use these exact markdown headers):
 
 ## 5. Critical Edge Cases
 - [Edge case 1 and how it must be handled]
-- [Edge case 2 and how it must be handled]
-"""
+- [Edge case 2 and how it must be handled]"""
+
+    return format_chatml(system_prompt, user_prompt)
 
 
 def run_step_01(

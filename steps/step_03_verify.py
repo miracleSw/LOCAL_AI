@@ -13,7 +13,7 @@ from typing import Optional
 
 from core.config import AppConfig
 from core.exporter import export_project
-from core.llm_client import LLMClient, LLMResponse
+from core.llm_client import LLMClient, LLMResponse, format_chatml
 from core.pipeline_session import PipelineSession
 from core.validator_base import BaseValidator, ValidationIssue, ValidationResult, run_with_repair
 
@@ -33,9 +33,10 @@ class VerifyValidator(BaseValidator):
         if not base_res.is_valid:
             return base_res
 
+        cleaned = base_res.cleaned_content
         issues = list(base_res.issues)
         # Check code block formatting
-        code_blocks = re.findall(r"```[a-zA-Z0-9_\-\.\+]*\s*\n(.*?)\n```", content, re.DOTALL)
+        code_blocks = re.findall(r"```[a-zA-Z0-9_\-\.\+]*\s*\n(.*?)\n```", cleaned, re.DOTALL)
         if not code_blocks:
             issues.append(ValidationIssue(
                 code="NO_FINAL_CODE_BLOCKS",
@@ -45,16 +46,18 @@ class VerifyValidator(BaseValidator):
             ))
 
         is_valid = not any(i.severity == "error" for i in issues)
-        return ValidationResult(is_valid=is_valid, issues=issues, cleaned_content=content)
+        return ValidationResult(is_valid=is_valid, issues=issues, cleaned_content=cleaned)
 
 
 def build_verify_prompt(task_text: str, analyze_output: str, solve_output: str) -> str:
-    """Construct prompt for Step 3."""
-    return f"""You are a Lead QA Engineer and Software Verification Specialist.
-Verify the solution generated in Step 2 against the constraints from Step 1 and the original task.
-Ensure all edge cases are addressed, zero placeholder code remains, and present the final files.
+    """Construct prompt for Step 3 using ChatML formatting."""
+    system_prompt = (
+        "You are a Lead QA Engineer and Software Verification Specialist.\n"
+        "Verify the solution generated in Step 2 against the constraints from Step 1 and the original task.\n"
+        "Ensure all edge cases are addressed, zero placeholder code remains, and present the final files."
+    )
 
-ORIGINAL TASK:
+    user_prompt = f"""ORIGINAL TASK:
 {task_text}
 
 STEP 1 REQUIREMENTS & CONSTRAINTS:
@@ -83,8 +86,9 @@ Assemble every final file needed for production. Make sure each file has a clean
 ## 4. Summary & Verification Status
 - Status: [VERIFIED_PASSED / REQUIRES_FIX]
 - Total files generated:
-- Ready for immediate production run.
-"""
+- Ready for immediate production run."""
+
+    return format_chatml(system_prompt, user_prompt)
 
 
 def run_step_03(

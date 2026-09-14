@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.config import AppConfig
-from core.llm_client import LLMClient, LLMResponse
+from core.llm_client import LLMClient, LLMResponse, format_chatml
 from core.pipeline_session import PipelineSession
 from core.validator_base import BaseValidator, ValidationIssue, ValidationResult, run_with_repair
 
@@ -30,9 +30,10 @@ class SolveValidator(BaseValidator):
         if not base_res.is_valid:
             return base_res
 
+        cleaned = base_res.cleaned_content
         issues = list(base_res.issues)
         # Check presence of code block
-        code_blocks = re.findall(r"```[a-zA-Z0-9_\-\.\+]*\s*\n(.*?)\n```", content, re.DOTALL)
+        code_blocks = re.findall(r"```[a-zA-Z0-9_\-\.\+]*\s*\n(.*?)\n```", cleaned, re.DOTALL)
         if not code_blocks:
             issues.append(ValidationIssue(
                 code="NO_CODE_BLOCKS_FOUND",
@@ -42,18 +43,19 @@ class SolveValidator(BaseValidator):
             ))
 
         is_valid = not any(i.severity == "error" for i in issues)
-        return ValidationResult(is_valid=is_valid, issues=issues, cleaned_content=content)
+        return ValidationResult(is_valid=is_valid, issues=issues, cleaned_content=cleaned)
 
 
 def build_solve_prompt(task_text: str, analyze_output: str, rag_context: str = "") -> str:
-    """Construct prompt for Step 2."""
-    rag_block = f"\nRAG REFERENCE CONTEXT:\n{rag_context}\n" if rag_context.strip() else ""
+    """Construct prompt for Step 2 using ChatML formatting."""
+    system_prompt = (
+        "You are an elite principal engineer and solution implementer.\n"
+        "Using the problem analysis below, produce a complete, robust, production-grade implementation.\n"
+        "Write clean code with proper error handling, modularity, and zero placeholders (no TODOs)."
+    )
+    rag_block = f"RAG REFERENCE CONTEXT:\n{rag_context}\n\n" if rag_context.strip() else ""
 
-    return f"""You are an elite principal engineer and solution implementer.
-Using the problem analysis below, produce a complete, robust, production-grade implementation.
-Write clean code with proper error handling, modularity, and zero placeholders (no TODOs).
-{rag_block}
-ORIGINAL TASK:
+    user_prompt = f"""{rag_block}ORIGINAL TASK:
 {task_text}
 
 VERIFIED ARCHITECTURAL SPECIFICATION (STEP 1):
@@ -72,8 +74,9 @@ For every code file, precede the code block with a heading or inside comment spe
 ```
 
 ## 3. Usage & Execution Instructions
-[Commands to run, test, and verify the solution]
-"""
+[Commands to run, test, and verify the solution]"""
+
+    return format_chatml(system_prompt, user_prompt)
 
 
 def run_step_02(
