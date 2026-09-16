@@ -33,7 +33,7 @@ class TestCore(unittest.TestCase):
         self.assertEqual(cfg.server_port, 8080)
         self.assertEqual(cfg.ctx_size, 6144)
         self.assertEqual(cfg.threads, 8)
-        self.assertEqual(cfg.gpu_layers, 12)
+        self.assertEqual(cfg.gpu_layers, 20)
         self.assertTrue(cfg.no_mmap)
         self.assertFalse(cfg.no_kv_offload)
         self.assertAlmostEqual(cfg.temperature, 0.05)

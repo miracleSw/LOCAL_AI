@@ -59,6 +59,7 @@ class AppConfig:
     max_tokens: int
     max_runtime_seconds: int
     no_warmup: bool
+    flash_attn: bool
 
     # RAG settings
     rag_top_k: int
@@ -199,6 +200,7 @@ def load_config(config_file: Optional[Path] = None) -> AppConfig:
         max_tokens=_i("llama", "max_tokens", 2048),
         max_runtime_seconds=_i("llama", "max_runtime_seconds", 300),
         no_warmup=_b("llama", "no_warmup", False),
+        flash_attn=_b("llama", "flash_attn", False),
 
         rag_top_k=_i("rag", "top_k", 5),
         rag_chunk_chars=_i("rag", "chunk_chars", 1200),

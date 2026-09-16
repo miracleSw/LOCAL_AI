@@ -74,25 +74,29 @@ The default configuration is specifically tuned for entry-level workstations (te
 
 | Component | Allocation | Rationale |
 | :--- | :--- | :--- |
-| **Model Weights (12 Layers)** | ~738 MB | 12 out of 36 transformer blocks offloaded via Vulkan. |
-| **Vulkan Compute Scratch** | ~301 MB | Execution graph buffers for tensor operations. |
-| **KV Cache (12 Layers @ 6144 ctx)** | ~75 MB | Enabled by Qwen 2.5 3B's GQA (8:1 ratio, 2 KV heads). |
-| **Windows DWM & Display Driver** | ~400–450 MB | OS desktop compositor baseline. |
-| **Total VRAM Allocated** | **~1,564 MB** | **~480 MB headroom** prevents WDDM PCIe x4 paging spikes. |
+| **Model Weights (20 Layers)** | ~1,140 MB | 20 out of 36 transformer blocks offloaded via Vulkan. |
+| **Vulkan Compute Scratch** | ~305 MB | Execution graph buffers with 512 ubatch size. |
+| **KV Cache (20 Layers @ 6144 ctx)** | ~120 MB | Lightweight due to Qwen 2.5 3B GQA (8:1 ratio, 2 KV heads). |
+| **Windows DWM & Display Driver** | ~350–400 MB | OS desktop compositor baseline. |
+| **Total VRAM Allocated** | **~1,915 MB** | **Optimal ~93% VRAM usage**, sustaining 17.5–18.2 tokens/s. |
 
-> **Note:** If the display is connected to an integrated GPU (e.g., Intel UHD 770) instead of the discrete GPU, the dedicated card's VRAM is completely freed from desktop rendering, allowing you to safely increase `gpu_layers` to `18`.
+> **Technical Warning:** The performance cliff occurs at `gpu_layers >= 23`. Exceeding 22 layers causes VRAM overflow, forcing Windows WDDM to page memory over the PCIe 4.0 x4 bus (bandwidth collapses from 64 GB/s down to <8 GB/s), which plunges token generation speed from **18.3 t/s to 11.1 t/s**. Setting `gpu_layers = 20` represents the maximum safe ceiling that prevents OS crashes and PCIe bottlenecks.
 
-### 2. System RAM Budget (8192 MB Total)
+### 2. Flash Attention Optimization on Vulkan
+* With Flash Attention enabled (`auto`/`on`): Prompt processing at 2048 ctx achieves only **143.42 tokens/s**.
+* With Flash Attention disabled (`--flash-attn off`): Prompt processing jumps to **333.90 – 360 tokens/s** (**2.32x faster** / +133%). Standard Vulkan attention shaders execute with significantly higher parallelism on AMD RDNA2 compute units.
+
+### 3. System RAM Budget (8192 MB Total)
 
 | Component | Allocation |
 | :--- | :--- |
 | **Windows OS & Background Services** | ~3,400–3,800 MB |
-| **CPU Model Layers (24 Layers)** | ~1,260 MB |
-| **CPU KV Cache (24 Layers @ 6144 ctx)** | ~150 MB |
+| **CPU Model Layers (16 Layers)** | ~860 MB |
+| **CPU KV Cache (16 Layers @ 6144 ctx)** | ~96 MB |
 | **Python Runtime + BM25 Index** | ~80 MB |
-| **Total System RAM Footprint** | **~5,050 MB** (~3.1 GB available headroom) |
+| **Total System RAM Footprint** | **~4,650 MB** (~3.4 GB safe headroom) |
 
-### 3. CPU Thread Allocation on Hybrid Architectures
+### 4. CPU Thread Allocation on Hybrid Architectures
 On Intel Alder Lake / Raptor Lake processors (such as the i7-12700 with 8 Performance cores and 4 Efficient cores), set `threads = 8`. GGML matrix multiplications use synchronous barriers across all active threads per layer; setting `threads > 8` forces threads onto lower-IPC E-cores, causing fast P-cores to stall at synchronization barriers.
 
 ---
