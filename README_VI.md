@@ -77,28 +77,33 @@ Dự án loại bỏ hoàn toàn các thư viện phụ thuộc cồng kềnh b�
 Cấu hình mặc định được tinh chỉnh chuyên sâu cho máy tính có cấu hình văn phòng / phòng thi (kiểm nghiệm trên Intel Core i7-12700, 8 GB RAM, AMD Radeon RX 6300 2 GB GDDR6):
 
 ### 1. Phân bổ VRAM (2048 MB tổng)
+Cấu hình tối ưu đo đạc thực nghiệm trên hệ thống (AMD Radeon RX 6300 2GB VRAM):
 
 | Thành phần | Dung lượng | Giải thích kỹ thuật |
 | :--- | :--- | :--- |
-| **Trọng số 12 layer GPU** | ~738 MB | Đưa 12 / 36 block transformer lên VRAM qua Vulkan. |
-| **Vulkan Compute Scratch Buffer** | ~301 MB | Vùng nhớ đệm thực thi đồ thị tính toán ma trận. |
-| **KV Cache 12 layer (@ 6144 ctx)**| ~75 MB | Rất nhẹ nhờ cơ chế GQA (tỷ lệ 8:1, 2 KV heads) của Qwen 2.5. |
-| **Windows DWM + Desktop Display** | ~400–450 MB | Bộ nhớ giao diện desktop của hệ điều hành. |
-| **Tổng VRAM sử dụng** | **~1,564 MB** | **Dư ~480 MB an toàn**, tránh tràn băng thông PCIe 4.0 x4 của RX 6300. |
+| **Trọng số 20 layer GPU** | ~1,140 MB | Đưa 20 / 36 block transformer lên VRAM qua Vulkan (tối ưu tối đa trước ngưỡng trào PCIe). |
+| **Vulkan Compute Scratch Buffer** | ~305 MB | Vùng nhớ đệm thực thi đồ thị tính toán ma trận với micro-batch 512. |
+| **KV Cache 20 layer (@ 6144 ctx)**| ~120 MB | Rất nhẹ nhờ cơ chế GQA (tỷ lệ 8:1, 2 KV heads) của Qwen 2.5. |
+| **Windows DWM + Desktop Display** | ~350–400 MB | Bộ nhớ giao diện desktop của hệ điều hành. |
+| **Tổng VRAM sử dụng** | **~1,915 MB** | **Đạt ngưỡng tối ưu 93% VRAM**, sinh token đạt ~17.5 - 18.2 tok/s. |
 
-> **Lưu ý:** Nếu cắm dây màn hình vào cổng iGPU trên bo mạch chủ (Intel UHD 770), card rời RX 6300 sẽ được giải phóng hoàn toàn khỏi tác vụ hiển thị Windows, cho phép nâng an toàn lên `gpu_layers = 18`.
+> **Cảnh báo kỹ thuật:** Ngưỡng sụt giảm hiệu năng (Performance Cliff) nằm ở `gpu_layers >= 23`. Khi vượt quá 22 layer, VRAM bị tràn và Windows WDDM buộc phải trào dữ liệu sang RAM hệ thống qua khe cắm PCIe 4.0 x4 (băng thông tụt từ 64 GB/s xuống dưới 8 GB/s), khiến tốc độ sinh token tụt nghiêm trọng từ **18.3 t/s xuống 11.1 t/s**. Do đó, `gpu_layers = 20` là điểm ngọt an toàn tuyệt đối, vừa đạt đỉnh tốc độ vừa không làm crash máy.
 
-### 2. Phân bổ RAM hệ thống (8192 MB tổng)
+### 2. Tối ưu Flash Attention trên Vulkan Shader
+* Khi để `flash_attn = auto` (bật): Tốc độ xử lý prompt dài (2048 tokens) chỉ đạt **143.42 tok/s**.
+* Khi tắt Flash Attention (`--flash-attn off`): Tốc độ xử lý prompt nhảy vọt lên **333.90 – 360 tok/s** (tăng tốc **2.32 lần** / +133%). Lý do: Kernel attention tiêu chuẩn trên tập lệnh Vulkan chạy song song hiệu quả hơn nhiều so với kernel flash-attention thử nghiệm trên card AMD RDNA2.
+
+### 3. Phân bổ RAM hệ thống (8192 MB tổng)
 
 | Thành phần | Dung lượng |
 | :--- | :--- |
 | **Hệ điều hành Windows + Dịch vụ nền** | ~3,400–3,800 MB |
-| **24 layer mô hình trên CPU** | ~1,260 MB |
-| **KV Cache 24 layer trên CPU (@ 6144 ctx)** | ~150 MB |
+| **16 layer mô hình trên CPU** | ~860 MB |
+| **KV Cache 16 layer trên CPU (@ 6144 ctx)** | ~96 MB |
 | **Python Runtime + Chỉ mục BM25** | ~80 MB |
-| **Tổng RAM tiêu thụ** | **~5,050 MB** (~3.1 GB trống cho các tác vụ khác) |
+| **Tổng RAM tiêu thụ** | **~4,650 MB** (~3.4 GB trống an toàn cho các tác vụ khác) |
 
-### 3. Tối ưu số luồng CPU trên vi kiến trúc lai (Hybrid CPU)
+### 4. Tối ưu số luồng CPU trên vi kiến trúc lai (Hybrid CPU)
 Với CPU có cả nhân P-core và E-core (như i7-12700 gồm 8 P-cores và 4 E-cores), cấu hình tối ưu là `threads = 8`. GGML sử dụng cơ chế rào cản đồng bộ (Synchronous Barrier) trên mỗi layer tính toán; nếu đặt `threads > 8`, luồng tính toán sẽ bị đẩy sang các nhân E-core có xung nhịp và IPC thấp hơn, khiến 8 nhân P-core mạnh phải dừng chờ nhân E-core tại điểm đồng bộ.
 
 ---
@@ -216,9 +221,10 @@ request_timeout_seconds= 300
 [llama]
 ctx_size            = 6144      # Context size in tokens (bội số của 1024)
 threads             = 8         # 8 luồng khớp 8 nhân P-core của i7-12700
-gpu_layers          = 12        # 12 layer an toàn cho VRAM 2GB (RX 6300)
+gpu_layers          = 20        # 20 layer tối ưu đỉnh cao cho VRAM 2GB (RX 6300)
 no_mmap             = true      # Khóa trang nhớ trong RAM, tránh đơ do page fault SSD
-no_kv_offload       = false     # Cho phép GPU giữ KV cache 12 layer để tăng tốc sinh mã
+no_kv_offload       = false     # Cho phép GPU giữ KV cache 20 layer để tăng tốc sinh mã
+flash_attn          = false     # Tắt Flash Attention để tăng tốc 2.3x prompt processing trên Vulkan
 temperature         = 0.05      # Nhiệt độ thấp cho code mang tính xác định
 top_p               = 0.85
 repeat_penalty      = 1.05

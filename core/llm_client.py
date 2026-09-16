@@ -285,6 +285,8 @@ class LLMClient:
             cmd.append("--no-kv-offload")
         if self.config.no_warmup:
             cmd.append("--no-warmup")
+        if not self.config.flash_attn:
+            cmd.extend(["--flash-attn", "off"])
 
         cmd.extend(["-f", str(prompt_file)])
 
